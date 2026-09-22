@@ -42,6 +42,7 @@ const EVENT_EXIT_FOUND := "exit_found"
 const EVENT_LEVEL_CLEAR := "level_clear"
 const EVENT_GAME_OVER := "game_over"
 const EVENT_TIME_UP := "time_up"
+const EVENT_PUNCH := "punch"
 
 const ENEMY_DIRECTIONS: Array[Vector2i] = [
 	Vector2i(0, -1),
@@ -253,6 +254,47 @@ func place_bomb() -> bool:
 	return true
 
 
+## 拳击手套：把正前方那颗炸弹往朝向推出去，一路滑到被墙、软砖或另一颗炸弹挡住为止；
+## 沿途碾到的敌人直接消灭（经典炸弹人的「推炸弹」玩法）。成功出手返回 true。
+func punch_bomb() -> bool:
+	if phase != Phase.PLAYING or not player.alive or not player.glove:
+		return false
+	var direction := player.facing
+	if direction == Vector2i.ZERO:
+		return false
+	var start: Vector2i = player.cell + direction
+	var bomb := bomb_at(start)
+	if bomb == null:
+		return false
+
+	var destination := start
+	while true:
+		var next: Vector2i = destination + direction
+		if not grid.is_walkable(next.x, next.y):
+			break
+		if bomb_at(next) != null:
+			break
+		destination = next
+
+	if destination != start:
+		bomb.cell = destination
+		_kill_enemies_in(_path_cells(start, destination, direction), start)
+
+	events.append(EVENT_PUNCH)
+	return true
+
+
+## start 到 destination 之间（含两端）的连续格，用来判定推炸弹沿途碾到了谁。
+func _path_cells(start: Vector2i, destination: Vector2i, direction: Vector2i) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	var cursor := start
+	while cursor != destination:
+		cells.append(cursor)
+		cursor += direction
+	cells.append(destination)
+	return cells
+
+
 ## 手动引爆自己所有的遥控炸弹（需先吃到遥控道具）。有炸弹被引爆返回 true。
 func detonate_remote() -> bool:
 	if phase != Phase.PLAYING or not player.remote_capable:
@@ -369,6 +411,7 @@ func _spawn_powerup(cell: Vector2i) -> void:
 		Tiles.PowerUp.SPEED,
 		Tiles.PowerUp.SHIELD,
 		Tiles.PowerUp.REMOTE,
+		Tiles.PowerUp.GLOVE,
 	]
 	powerups.append(PowerUp.new(cell, kinds[_rng.randi_range(0, kinds.size() - 1)]))
 

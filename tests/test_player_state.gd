@@ -8,6 +8,7 @@ func run() -> void:
 	_test_powerup_effects()
 	_test_caps_are_respected()
 	_test_shield_decays()
+	_test_respawn_keeps_growth()
 
 
 func _test_bomb_capacity_limit() -> void:
@@ -34,6 +35,10 @@ func _test_powerup_effects() -> void:
 	assert_true(p.speed > base_speed, "速度提升")
 	p.apply_powerup(Tiles.PowerUp.SHIELD)
 	assert_true(p.has_shield(), "获得护盾")
+	p.apply_powerup(Tiles.PowerUp.REMOTE)
+	assert_true(p.remote_capable, "获得遥控引爆能力")
+	p.apply_powerup(Tiles.PowerUp.GLOVE)
+	assert_true(p.glove, "获得拳击手套")
 
 
 func _test_caps_are_respected() -> void:
@@ -47,6 +52,20 @@ func _test_caps_are_respected() -> void:
 	for _i in 100:
 		p.apply_powerup(Tiles.PowerUp.SPEED)
 	assert_almost_eq(p.speed, PlayerState.MAX_SPEED, "速度不超过上限")
+
+
+func _test_respawn_keeps_growth() -> void:
+	var p := PlayerState.new(0, Vector2i(1, 1))
+	p.apply_powerup(Tiles.PowerUp.GLOVE)
+	p.apply_powerup(Tiles.PowerUp.REMOTE)
+	p.bombs_placed = 2
+	p.alive = false
+	p.reset_for_respawn(Vector2i(3, 3))
+	assert_true(p.alive, "复活后恢复存活")
+	assert_eq(p.cell, Vector2i(3, 3), "复活回到出生点")
+	assert_eq(p.bombs_placed, 0, "复活清空炸弹额度占用")
+	assert_true(p.glove, "拳击手套跨复活保留")
+	assert_true(p.remote_capable, "遥控能力跨复活保留")
 
 
 func _test_shield_decays() -> void:

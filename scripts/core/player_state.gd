@@ -24,6 +24,8 @@ var shield_time: float = 0.0
 var lives: int = DEFAULT_LIVES
 ## 是否已获得遥控引爆能力（吃到遥控道具后永久生效）。
 var remote_capable: bool = false
+## 是否已获得拳击手套，可以把正前方的炸弹推出去（吃到后永久生效）。
+var glove: bool = false
 ## 最近一次的移动朝向，供渲染层选方向贴图。
 var facing: Vector2i = Vector2i(0, 1)
 ## 当前已放置、尚未爆炸的炸弹数。
@@ -55,9 +57,11 @@ func apply_powerup(kind: int) -> void:
 			shield_time = SHIELD_DURATION
 		Tiles.PowerUp.REMOTE:
 			remote_capable = true
+		Tiles.PowerUp.GLOVE:
+			glove = true
 
 
-## 复活：清掉临时状态并给一段无敌时间，成长数值（炸弹数/火力/速度/遥控）保留。
+## 复活：清掉临时状态并给一段无敌时间，成长数值（炸弹数/火力/速度/遥控/手套）保留。
 func reset_for_respawn(p_cell: Vector2i) -> void:
 	cell = p_cell
 	alive = true

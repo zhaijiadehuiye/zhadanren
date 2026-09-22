@@ -39,6 +39,10 @@ func run() -> void:
 	_test_enemy_blocked_by_bomb()
 	_test_enemy_contact_kills_player()
 	_test_powerup_pickup()
+	_test_punch_needs_glove()
+	_test_punch_slides_bomb_until_blocked()
+	_test_punch_stops_at_wall_and_bomb()
+	_test_punch_crushes_enemy_on_path()
 	_test_remote_bomb_needs_powerup()
 	_test_remote_bomb_manual_detonation()
 	_test_exit_revealed_when_its_block_is_destroyed()
@@ -86,6 +90,8 @@ func _session(rows: Array, player_cell: Vector2i = Vector2i(1, 1)) -> GameSessio
 	s.player.power = PlayerState.DEFAULT_POWER
 	s.player.speed = PlayerState.DEFAULT_SPEED
 	s.player.remote_capable = false
+	s.player.glove = false
+	s.player.facing = Vector2i(0, 1)
 	return s
 
 
@@ -339,6 +345,70 @@ func _test_powerup_pickup() -> void:
 	assert_eq(s.player.power, PlayerState.DEFAULT_POWER + 1, "火力提升")
 	assert_eq(s.powerups.size(), 0, "道具被拾取后从地图移除")
 	assert_eq(s.level_score, GameSession.SCORE_POWERUP, "拾取道具得分")
+
+
+func _test_punch_needs_glove() -> void:
+	var s := _session(OPEN)
+	s.bombs.append(Bomb.new(Vector2i(2, 1), 0, 1, 99.0))
+	s.player.facing = Vector2i(1, 0)
+	assert_false(s.punch_bomb(), "没吃到拳击手套时推不动炸弹")
+	assert_eq(s.bombs[0].cell, Vector2i(2, 1), "炸弹原地不动")
+
+	s.player.glove = true
+	assert_true(s.punch_bomb(), "拿到手套后可以推炸弹")
+	assert_eq(s.bombs[0].cell, Vector2i(5, 1), "炸弹被推到通道尽头")
+	assert_true(s.events.has(GameSession.EVENT_PUNCH), "发出出拳事件")
+
+	s.player.cell = Vector2i(1, 3)
+	s.player.facing = Vector2i(0, -1)
+	assert_false(s.punch_bomb(), "正前方没有炸弹时出拳无效")
+
+
+func _test_punch_slides_bomb_until_blocked() -> void:
+	var s := _session([
+		"#########",
+		"#.......#",
+		"#.....x.#",
+		"#########",
+	], Vector2i(1, 2))
+	s.player.glove = true
+	s.player.facing = Vector2i(1, 0)
+	s.bombs.append(Bomb.new(Vector2i(2, 2), 0, 1, 99.0))
+	assert_true(s.punch_bomb(), "推炸弹")
+	assert_eq(s.bombs[0].cell, Vector2i(5, 2), "一路滑到软砖前停住")
+
+
+func _test_punch_stops_at_wall_and_bomb() -> void:
+	var s := _session(OPEN)
+	s.player.glove = true
+	s.player.facing = Vector2i(1, 0)
+	s.bombs.append(Bomb.new(Vector2i(2, 1), 0, 1, 99.0))
+	# 前面还堵着一颗炸弹：只能滑到它前面一格，不能叠在一起。
+	s.bombs.append(Bomb.new(Vector2i(4, 1), 0, 1, 99.0))
+	assert_true(s.punch_bomb(), "推炸弹")
+	assert_eq(s.bombs[0].cell, Vector2i(3, 1), "被另一颗炸弹挡住就停下")
+
+	# 贴着右墙的炸弹推不动，但仍然算一次出拳（给音效反馈）。
+	var wall := _session(OPEN)
+	wall.player.glove = true
+	wall.player.cell = Vector2i(4, 1)
+	wall.player.facing = Vector2i(1, 0)
+	wall.bombs.append(Bomb.new(Vector2i(5, 1), 0, 1, 99.0))
+	assert_true(wall.punch_bomb(), "贴墙时依然算出拳")
+	assert_eq(wall.bombs[0].cell, Vector2i(5, 1), "贴墙的炸弹不动")
+
+
+func _test_punch_crushes_enemy_on_path() -> void:
+	var s := _session(OPEN)
+	s.player.glove = true
+	s.player.facing = Vector2i(1, 0)
+	s.bombs.append(Bomb.new(Vector2i(2, 1), 0, 1, 99.0))
+	var e := Enemy.new(0, Vector2i(4, 1), 0, 99.0)
+	s.enemies.append(e)
+	assert_true(s.punch_bomb(), "推炸弹")
+	assert_eq(s.bombs[0].cell, Vector2i(5, 1), "炸弹滑到底")
+	assert_false(e.alive, "被推的炸弹沿途碾死敌人")
+	assert_eq(s.level_score, GameSession.SCORE_ENEMY, "碾死敌人同样得分")
 
 
 func _test_remote_bomb_needs_powerup() -> void:
