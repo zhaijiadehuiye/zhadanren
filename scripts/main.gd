@@ -89,6 +89,16 @@ const BGM_PLAY := "res://assets/audio/bgm_play.wav"
 const SFX_FUSE := "res://assets/audio/fuse.wav"
 const SFX_STEP := "res://assets/audio/step.wav"
 const SFX_CLEAR := "res://assets/audio/level_clear2.wav"
+const SFX_READY := "res://assets/audio/ready.wav"
+const SFX_GO := "res://assets/audio/go.wav"
+
+## 动画时长：敌人阵亡、炸弹落地弹跳。
+const ENEMY_DEATH_TIME := 0.5
+const BOMB_POP_TIME := 0.16
+## 炸弹视觉位置追赶速度（格 / 秒）。
+const BOMB_SLIDE_SPEED := 9.0
+## 停下来多久才把行走动画收回站立帧，避免走格间隙里动画反复归零。
+const WALK_IDLE_RESET := 0.09
 
 ## 时间紧迫时 BGM 升调加速，复刻老式炸弹人的「hurry up」压迫感。
 const HURRY_TIME := 30.0
@@ -145,6 +155,21 @@ var _move_cooldown := 0.0
 var _anim_time := 0.0
 var _banner_time := 0.0
 var _banner_text := ""
+
+## 行走动画相位：按实际移动速度推进，脚步与动画同步；停久了才归零回到站立帧。
+var _walk_phase := 0.0
+var _walk_idle := 0.0
+## 敌人阵亡动画：索引 → 剩余播放时间（0 表示播完，不再绘制）。
+var _enemy_death: Dictionary = {}
+## 每个敌人的行走动画相位。
+var _enemy_walk_phase: Array[float] = []
+## 炸弹的视觉位置与落地弹跳计时，键为炸弹对象本身。
+var _bomb_pos: Dictionary = {}
+var _bomb_pop: Dictionary = {}
+## 开局倒计时上一次报数，用来判断何时该响一声。
+var _ready_last := -1
+## 上一次绘制过的关卡号，用来在换关瞬间把视觉坐标拉回新地图，避免横穿地图的滑动。
+var _level_seen := -1
 
 ## 手感相关的瞬时状态。
 var _shake_time := 0.0
@@ -212,7 +237,7 @@ func _load_sfx() -> void:
 		var path: String = SFX_PATHS[event]
 		if ResourceLoader.exists(path):
 			_sfx[event] = load(path)
-	for path in [SFX_FUSE, SFX_STEP, SFX_CLEAR]:
+	for path in [SFX_FUSE, SFX_STEP, SFX_CLEAR, SFX_READY, SFX_GO]:
 		if ResourceLoader.exists(path):
 			_sfx[path] = load(path)
 	for i in SFX_VOICES:
@@ -269,8 +294,8 @@ func _play_stream(stream: AudioStream) -> void:
 func _new_session() -> void:
 	session = GameSession.new()
 	_sync_visual_positions(true)
-	_banner_text = "第 1 关 开始！"
-	_banner_time = 1.6
+	_banner_text = ""
+	_banner_time = 0.0
 	_shake_time = 0.0
 	_shake_power = 0.0
 	_hitstop = 0.0
@@ -278,6 +303,10 @@ func _new_session() -> void:
 	_buffer_dir = Vector2i.ZERO
 	_buffer_left = 0.0
 	_popups.clear()
+	_ready_last = -1
+	_level_seen = session.level_index
+	_bomb_pos.clear()
+	_bomb_pop.clear()
 
 
 ## 让视觉坐标立刻对齐逻辑坐标（重开、换关、复活时用，避免出现横穿地图的滑动）。
@@ -286,10 +315,20 @@ func _sync_visual_positions(force: bool = false) -> void:
 		return
 	if force:
 		_player_pos = Vector2(session.player.cell)
+		_walk_phase = 0.0
+		_walk_idle = 0.0
+		_enemy_death.clear()
+		_bomb_pos.clear()
+		_bomb_pop.clear()
 	_enemy_pos.resize(session.enemies.size())
+	_enemy_walk_phase.resize(session.enemies.size())
 	for i in session.enemies.size():
 		if force or i >= _enemy_pos.size():
 			_enemy_pos[i] = Vector2(session.enemies[i].cell)
+			_enemy_walk_phase[i] = 0.0
+		# 已经在场上阵亡的敌人不补播动画（换关/复活后直接消失）。
+		if not session.enemies[i].alive:
+			_enemy_death[i] = 0.0
 
 
 # ---------------------------------------------------------------- 输入
@@ -414,6 +453,7 @@ func _process(delta: float) -> void:
 				_poll_movement(delta)
 				_drain_events()
 				_update_fuse_tick(delta)
+				_update_ready_tick()
 			_update_hurry()
 		_update_visual_positions(delta)
 
@@ -455,6 +495,19 @@ func _update_fuse_tick(delta: float) -> void:
 	_fuse_timer = lerpf(0.09, 0.3, clampf(most_urgent / FUSE_TICK_WINDOW, 0.0, 1.0))
 
 
+## 开局倒计时：每跳一个数字响一声，让「准备」阶段也有节拍感。
+func _update_ready_tick() -> void:
+	if session.phase != GameSession.Phase.READY:
+		_ready_last = -1
+		return
+	var current := int(ceil(session.phase_time_left))
+	if current == _ready_last:
+		return
+	_ready_last = current
+	if current > 0:
+		_play_path(SFX_READY)
+
+
 ## 时间所剩无几时给 BGM 升调加速，复刻老式炸弹人的「hurry up」压迫感。
 func _update_hurry() -> void:
 	if _bgm == null:
@@ -476,6 +529,14 @@ func _drain_events() -> void:
 	for event in session.pop_events():
 		_play_sfx(event)
 		match event:
+			GameSession.EVENT_LEVEL_START:
+				_banner_text = "第 %d 关 开始！" % (session.level_index + 1)
+				_banner_time = 1.2
+				_play_path(SFX_GO)
+			GameSession.EVENT_PLACE_BOMB:
+				var placed := session.bomb_at(session.player.cell)
+				if placed != null:
+					_bomb_pop[placed] = BOMB_POP_TIME
 			GameSession.EVENT_EXPLOSION:
 				_add_shake(SHAKE_EXPLOSION)
 				_hitstop = maxf(_hitstop, HITSTOP_EXPLOSION)
@@ -507,6 +568,10 @@ func _drain_events() -> void:
 ## 视觉坐标以固定速度追赶逻辑坐标。追赶速度取「走一格时间的 1.15 倍」，
 ## 让精灵在一格冷却结束前刚好到位，连起来是连续滑动而不是走一步停一下。
 func _update_visual_positions(delta: float) -> void:
+	# 换关瞬间：敌人数量可能和新关卡一样，光靠长度判断会漏掉，所以直接比关卡号。
+	if session.level_index != _level_seen:
+		_level_seen = session.level_index
+		_sync_visual_positions(true)
 	if session.player.alive:
 		var target := Vector2(session.player.cell)
 		var catch_up := 1.15 / _step_duration()
@@ -514,16 +579,61 @@ func _update_visual_positions(delta: float) -> void:
 		_player_pos = _player_pos.move_toward(target, catch_up * delta)
 	else:
 		_walking = false
+	_update_walk_phase(delta)
 
 	if _enemy_pos.size() != session.enemies.size():
 		_sync_visual_positions(true)
 	for i in session.enemies.size():
 		var enemy := session.enemies[i]
 		if not enemy.alive:
+			# 刚阵亡的敌人开播死亡动画，已经播完的保持 0 不再绘制。
+			_enemy_death[i] = (
+				ENEMY_DEATH_TIME if not _enemy_death.has(i)
+				else maxf(float(_enemy_death[i]) - delta, 0.0)
+			)
 			continue
+		_enemy_death.erase(i)
 		var target := Vector2(enemy.cell)
-		var speed := 1.25 / maxf(enemy.move_interval, 0.05)
-		_enemy_pos[i] = _enemy_pos[i].move_toward(target, speed * delta)
+		var interval := maxf(enemy.move_interval, 0.05)
+		_enemy_pos[i] = _enemy_pos[i].move_toward(target, 1.25 / interval * delta)
+		if _enemy_pos[i].distance_to(target) > 0.02:
+			_enemy_walk_phase[i] = float(_enemy_walk_phase[i]) + delta / interval
+		else:
+			_enemy_walk_phase[i] = 0.0
+
+	_update_bomb_visuals(delta)
+
+
+## 行走动画相位按实际移动速度推进，走一格刚好走完一个循环，脚步与动画自然同步。
+func _update_walk_phase(delta: float) -> void:
+	if _walking:
+		_walk_phase += delta / _step_duration()
+		_walk_idle = 0.0
+		return
+	_walk_idle += delta
+	if _walk_idle > WALK_IDLE_RESET:
+		_walk_phase = 0.0
+
+
+## 炸弹的视觉位置独立插值：位置变化时能看到滑动而不是瞬移；落地时补一个弹跳。
+func _update_bomb_visuals(delta: float) -> void:
+	for bomb in session.bombs:
+		var target := Vector2(bomb.cell)
+		if _bomb_pos.has(bomb):
+			_bomb_pos[bomb] = (_bomb_pos[bomb] as Vector2).move_toward(target, BOMB_SLIDE_SPEED * delta)
+		else:
+			_bomb_pos[bomb] = target
+	for key in _bomb_pos.keys():
+		if not session.bombs.has(key):
+			_bomb_pos.erase(key)
+			_bomb_pop.erase(key)
+	for key in _bomb_pop.keys():
+		_bomb_pop[key] = maxf(float(_bomb_pop[key]) - delta, 0.0)
+
+
+## 行走图集的行号：相位每前进 1.0 走完 4 帧。
+func _walk_row(phase: float) -> int:
+	return int(phase * 4.0) % 4
 
 
 # ---------------------------------------------------------------- 绘制
@@ -552,8 +662,20 @@ func _draw_play() -> void:
 	_draw_bombs()
 	_draw_popups()
 	draw_set_transform(Vector2.ZERO)
+	_draw_ready_overlay()
 	_draw_hud()
 	_draw_banner()
+
+
+## 开局倒计时：压暗棋盘并报数，让玩家看清地图再出发。
+func _draw_ready_overlay() -> void:
+	if session.phase != GameSession.Phase.READY:
+		return
+	var board := Rect2(BOARD_ORIGIN, _board_size())
+	draw_rect(board, Color(0.05, 0.03, 0.12, 0.55))
+	var center := board.get_center()
+	_text_center(center.x, center.y - 30.0, "第 %d 关" % (session.level_index + 1), 34, COLOR_TEXT_LIGHT)
+	_text_center(center.x, center.y + 30.0, str(int(ceil(session.phase_time_left))), 76, Color("ffd54f"))
 
 
 func _draw_popups() -> void:
@@ -588,12 +710,14 @@ func _draw_frame(tex: Texture2D, index: int, rect: Rect2, tint: Color = Color.WH
 
 
 ## 画 4 列 × rows 行的角色/怪物图集：列由朝向决定，行由动画帧决定。
-func _draw_sheet(tex: Texture2D, col: int, row: int, rect: Rect2, rows: int) -> void:
+func _draw_sheet(
+	tex: Texture2D, col: int, row: int, rect: Rect2, rows: int, tint: Color = Color.WHITE
+) -> void:
 	if tex == null:
 		return
 	var cw := tex.get_width() / 4.0
 	var ch := tex.get_height() / float(rows)
-	draw_texture_rect_region(tex, rect, Rect2(float(col) * cw, float(row) * ch, cw, ch))
+	draw_texture_rect_region(tex, rect, Rect2(float(col) * cw, float(row) * ch, cw, ch), tint)
 
 
 ## 把 16×16 的瓦片放大铺满一个格子。
@@ -682,7 +806,7 @@ func _draw_powerups() -> void:
 func _draw_bombs() -> void:
 	var ball: Texture2D = _tex.get(POWERUP_TEX[Tiles.PowerUp.EXTRA_BOMB])
 	for bomb in session.bombs:
-		var center := _center_of(Vector2(bomb.cell))
+		var center := _center_of(_bomb_pos.get(bomb, Vector2(bomb.cell)))
 		# 遥控炸弹不倒数，改成稳定的金色呼吸；普通炸弹越接近爆炸闪得越快。
 		if bomb.remote:
 			var breathe := 1.0 + 0.08 * sin(_anim_time * 6.0)
@@ -692,7 +816,9 @@ func _draw_bombs() -> void:
 			var urgency := clampf(1.0 - bomb.fuse / GameSession.DEFAULT_FUSE, 0.0, 1.0)
 			var blink := 0.5 + 0.5 * sin(_anim_time * (6.0 + urgency * 26.0))
 			draw_circle(center, CELL * 0.42, Color(1.0, 0.35 + 0.3 * urgency, 0.2, 0.25 + 0.35 * blink))
-		var size := CELL * 0.86 * (1.0 + 0.06 * sin(_anim_time * 9.0))
+		# 刚落地的炸弹从偏大缩回原尺寸，给「放下去」一个实感。
+		var pop := float(_bomb_pop.get(bomb, 0.0)) / BOMB_POP_TIME
+		var size := CELL * 0.86 * (1.0 + 0.06 * sin(_anim_time * 9.0) + 0.3 * pop)
 		_draw_frame(ball, int(_anim_time * 10.0), Rect2(
 			center.x - size * 0.5, center.y - size * 0.5, size, size
 		))
@@ -722,16 +848,44 @@ func _draw_enemies() -> void:
 	for i in session.enemies.size():
 		var enemy := session.enemies[i]
 		if not enemy.alive:
+			_draw_enemy_death(i)
 			continue
 		var pos: Vector2 = _enemy_pos[i] if i < _enemy_pos.size() else Vector2(enemy.cell)
 		var sheet: Texture2D = _tex.get(ENEMY_SHEETS[enemy.kind % ENEMY_SHEETS.size()])
 		draw_circle(_center_of(pos) + Vector2(0, CELL * 0.34), CELL * 0.26, Color(0, 0, 0, 0.25))
-		var row := int(_anim_time * 7.0 + i) % 4
-		_draw_sheet(sheet, _dir_column(enemy.facing), row, _sprite_rect(pos), 4)
+		var phase: float = _enemy_walk_phase[i] if i < _enemy_walk_phase.size() else 0.0
+		_draw_sheet(sheet, _dir_column(enemy.facing), _walk_row(phase), _sprite_rect(pos), 4)
+
+
+## 敌人阵亡：本体缩小上飘淡出，同时冒一团烟，比直接消失更容易看清「炸到了」。
+func _draw_enemy_death(index: int) -> void:
+	var left := float(_enemy_death.get(index, 0.0))
+	if left <= 0.0 or index >= _enemy_pos.size():
+		return
+	var progress := 1.0 - left / ENEMY_DEATH_TIME
+	var center := _center_of(_enemy_pos[index])
+	var smoke: Texture2D = _tex.get(SMOKE_TEX)
+	var smoke_size := CELL * (0.7 + 0.8 * progress)
+	_draw_frame(
+		smoke,
+		int(progress * 7.0),
+		Rect2(center.x - smoke_size * 0.5, center.y - smoke_size * 0.5, smoke_size, smoke_size),
+		Color(1, 1, 1, 0.85 * (1.0 - progress))
+	)
+	var enemy := session.enemies[index]
+	var sheet: Texture2D = _tex.get(ENEMY_SHEETS[enemy.kind % ENEMY_SHEETS.size()])
+	var shrink := 1.0 - 0.65 * progress
+	var base := _sprite_rect(_enemy_pos[index] + Vector2(0.0, -progress * 0.6))
+	var rect := Rect2(base.get_center() - base.size * 0.5 * shrink, base.size * shrink)
+	_draw_sheet(
+		sheet, _dir_column(enemy.facing), int(progress * 9.0) % 4, rect, 4,
+		Color(1, 1, 1, 1.0 - progress)
+	)
 
 
 func _draw_player() -> void:
 	if not session.player.alive:
+		_draw_player_death()
 		return
 	var player := session.player
 	var center := _center_of(_player_pos)
@@ -741,10 +895,22 @@ func _draw_player() -> void:
 		draw_circle(center, CELL * 0.46, Color(0.85, 0.97, 1.0, 0.22))
 	draw_circle(center + Vector2(0, CELL * 0.34), CELL * 0.26, Color(0, 0, 0, 0.28))
 	var sheet: Texture2D = _tex.get(CHAR_SHEETS[_selected_char])
-	var row := 0
-	if _walking:
-		row = [0, 1, 2, 3][int(_anim_time * 9.0) % 4]
-	_draw_sheet(sheet, _dir_column(player.facing), row, _sprite_rect(_player_pos), 7)
+	_draw_sheet(sheet, _dir_column(player.facing), _walk_row(_walk_phase), _sprite_rect(_player_pos), 7)
+
+
+## 玩家阵亡：本体原地打转、缩小并淡出。
+## 用四个朝向循环冒充「旋转」，比真去旋转像素精灵更贴合这套 16×16 图集。
+## 动画只占阵亡过渡的前 60%，剩下的时间保持「人已经不在了」，读起来更清楚。
+func _draw_player_death() -> void:
+	if session.phase != GameSession.Phase.DYING:
+		return
+	var span := GameSession.DYING_DELAY * 0.6
+	var progress := clampf(1.0 - session.phase_time_left / span, 0.0, 1.0)
+	var sheet: Texture2D = _tex.get(CHAR_SHEETS[_selected_char])
+	var shrink := 1.0 - 0.45 * progress
+	var base := _sprite_rect(_player_pos + Vector2(0.0, -progress * 0.5))
+	var rect := Rect2(base.get_center() - base.size * 0.5 * shrink, base.size * shrink)
+	_draw_sheet(sheet, int(progress * 10.0) % 4, 0, rect, 7, Color(1, 1, 1, 1.0 - progress))
 
 
 ## 逻辑朝向 → 图集列号：0 下 / 1 上 / 2 左 / 3 右。
