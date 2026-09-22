@@ -55,6 +55,7 @@ const POWERUP_TEX := {
 	Tiles.PowerUp.SPEED: "res://assets/sprites/items/powerup_speed.png",
 	Tiles.PowerUp.SHIELD: "res://assets/sprites/items/powerup_bomb.png",
 	Tiles.PowerUp.REMOTE: "res://assets/sprites/items/powerup_remote.png",
+	Tiles.PowerUp.GLOVE: "res://assets/sprites/items/powerup_glove.png",
 }
 const POWERUP_TINTS := {
 	Tiles.PowerUp.EXTRA_BOMB: Color("4fc3f7"),
@@ -62,6 +63,7 @@ const POWERUP_TINTS := {
 	Tiles.PowerUp.SPEED: Color("66bb6a"),
 	Tiles.PowerUp.SHIELD: Color("ba68c8"),
 	Tiles.PowerUp.REMOTE: Color("ffd54f"),
+	Tiles.PowerUp.GLOVE: Color("ef5350"),
 }
 
 ## 瓦片集 dungeon.png（12 列 × 4 行，16×16）里挑出来的三个格子。
@@ -80,6 +82,7 @@ const SFX_PATHS := {
 	GameSession.EVENT_LEVEL_CLEAR: "res://assets/audio/level_clear.wav",
 	GameSession.EVENT_GAME_OVER: "res://assets/audio/game_over.wav",
 	GameSession.EVENT_TIME_UP: "res://assets/audio/alert.wav",
+	GameSession.EVENT_PUNCH: "res://assets/audio/punch.wav",
 }
 const SFX_VOICES := 8
 
@@ -99,6 +102,9 @@ const BOMB_POP_TIME := 0.16
 const BOMB_SLIDE_SPEED := 9.0
 ## 停下来多久才把行走动画收回站立帧，避免走格间隙里动画反复归零。
 const WALK_IDLE_RESET := 0.09
+## 出拳特效时长与打击停顿，让推炸弹也有一下「打中了」的手感。
+const PUNCH_FLASH_TIME := 0.18
+const HITSTOP_PUNCH := 0.04
 
 ## 时间紧迫时 BGM 升调加速，复刻老式炸弹人的「hurry up」压迫感。
 const HURRY_TIME := 30.0
@@ -170,6 +176,9 @@ var _bomb_pop: Dictionary = {}
 var _ready_last := -1
 ## 上一次绘制过的关卡号，用来在换关瞬间把视觉坐标拉回新地图，避免横穿地图的滑动。
 var _level_seen := -1
+## 出拳特效：剩余时间与出拳方向，用来在角色身前画一下冲击。
+var _punch_flash := 0.0
+var _punch_dir := Vector2i(0, 1)
 
 ## 手感相关的瞬时状态。
 var _shake_time := 0.0
@@ -307,6 +316,7 @@ func _new_session() -> void:
 	_level_seen = session.level_index
 	_bomb_pos.clear()
 	_bomb_pop.clear()
+	_punch_flash = 0.0
 
 
 ## 让视觉坐标立刻对齐逻辑坐标（重开、换关、复活时用，避免出现横穿地图的滑动）。
@@ -380,6 +390,11 @@ func _handle_play_key(keycode: int) -> void:
 				_move_cooldown = 0.05
 		KEY_F:
 			session.detonate_remote()
+		KEY_J:
+			if session.punch_bomb():
+				_punch_dir = session.player.facing
+				_punch_flash = PUNCH_FLASH_TIME
+				_hitstop = maxf(_hitstop, HITSTOP_PUNCH)
 		KEY_ENTER:
 			if not session.is_playing() and session.phase == GameSession.Phase.GAME_OVER:
 				_new_session()
@@ -568,6 +583,7 @@ func _drain_events() -> void:
 ## 视觉坐标以固定速度追赶逻辑坐标。追赶速度取「走一格时间的 1.15 倍」，
 ## 让精灵在一格冷却结束前刚好到位，连起来是连续滑动而不是走一步停一下。
 func _update_visual_positions(delta: float) -> void:
+	_punch_flash = maxf(_punch_flash - delta, 0.0)
 	# 换关瞬间：敌人数量可能和新关卡一样，光靠长度判断会漏掉，所以直接比关卡号。
 	if session.level_index != _level_seen:
 		_level_seen = session.level_index
@@ -660,6 +676,7 @@ func _draw_play() -> void:
 	_draw_player()
 	# 炸弹画在角色之后：站在自己刚放的炸弹上时也必须看得见它，否则容易误踩送命。
 	_draw_bombs()
+	_draw_punch_flash()
 	_draw_popups()
 	draw_set_transform(Vector2.ZERO)
 	_draw_ready_overlay()
@@ -824,6 +841,20 @@ func _draw_bombs() -> void:
 		))
 
 
+## 出拳特效：在角色身前画一圈快速扩散并淡出的冲击环，让「推炸弹」这一下看得见。
+func _draw_punch_flash() -> void:
+	if _punch_flash <= 0.0:
+		return
+	var progress := 1.0 - _punch_flash / PUNCH_FLASH_TIME
+	var center := _center_of(_player_pos + Vector2(_punch_dir) * (0.45 + 0.55 * progress))
+	var alpha := 1.0 - progress
+	draw_circle(center, CELL * (0.20 + 0.34 * progress), Color(1.0, 0.95, 0.7, 0.45 * alpha))
+	draw_arc(
+		center, CELL * (0.28 + 0.44 * progress), 0.0, TAU, 28,
+		Color(1.0, 0.85, 0.4, alpha), 5.0
+	)
+
+
 func _draw_blasts() -> void:
 	if session.blast_cells.is_empty():
 		return
@@ -957,6 +988,7 @@ func _draw_hud() -> void:
 		[Tiles.PowerUp.FIRE, "火力", "%d" % player.power],
 		[Tiles.PowerUp.SPEED, "速度", "%.1f" % player.speed],
 		[Tiles.PowerUp.REMOTE, "遥控", "已获得" if player.remote_capable else "未获得"],
+		[Tiles.PowerUp.GLOVE, "手套", "已获得" if player.glove else "未获得"],
 	]
 	var row_y := y + 82.0
 	for row in rows:
@@ -983,10 +1015,11 @@ func _draw_hud() -> void:
 
 
 func _draw_hud_hints() -> void:
-	var y := get_viewport_rect().size.y - 92.0
+	var y := get_viewport_rect().size.y - 118.0
 	var lines := [
 		"WASD / 方向键 移动   空格 放炸弹",
 		"F 手动引爆（需吃到遥控道具）",
+		"J 推炸弹（需吃到拳击手套）",
 		"P 暂停   R 重开   ESC 返回选人",
 	]
 	for line in lines:
