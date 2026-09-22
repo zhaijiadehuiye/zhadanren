@@ -1,6 +1,8 @@
 # 素材署名与来源（CREDITS）
 
-本项目使用的全部美术与音效素材均来自 **Ninja Adventure Asset Pack**。
+本项目的美术素材与一部分音效来自 **Ninja Adventure Asset Pack**；BGM 与手感类音效
+（`bgm_*.wav` / `fuse.wav` / `step.wav` / `level_clear2.wav`）为本项目**原创合成**，
+不引用任何第三方作品，无版权风险。
 
 | 项目 | 内容 |
 | --- | --- |
@@ -88,6 +90,22 @@
 | `alert.wav` | `Sounds/Game/Alert.wav` |
 | `bonus.wav` | `Sounds/Game/Bonus.wav` |
 | `place_bomb.wav` | `Sounds/Game/MiniImpact.wav` |
+
+### 原创音频 `assets/audio/`（非第三方素材）
+
+以下文件由本项目用 Python + numpy 从零合成（方波 / 三角波 / 噪声 + 包络混音），
+不使用任何现成采样，可自由使用与修改。
+
+| 项目内文件 | 用途 | 时长 | 说明 |
+| --- | --- | --- | --- |
+| `bgm_title.wav` | 标题页 BGM | 8.89s | 108 BPM，4 小节，无鼓组，循环播放 |
+| `bgm_play.wav` | 对局 BGM | 13.71s | 140 BPM，8 小节，含鼓组；剩余时间 < 30s 时升调至 1.14x |
+| `fuse.wav` | 引信滴答 | 0.05s | 场上最急的炸弹进入最后 1s 后开始滴答 |
+| `step.wav` | 脚步 | 0.07s | 每成功走一格播放一次 |
+| `level_clear2.wav` | 过关 jingle | 0.88s | 过关瞬间播放的欢快上行音阶 |
+
+所有音频均为 16-bit PCM 立体声 44100Hz；生成时按目标 RMS 归一化并做 0.95 峰值限幅，
+保证不同音效之间响度一致。
 
 ---
 
