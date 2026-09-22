@@ -21,6 +21,7 @@ const OPEN := [
 func run() -> void:
 	_test_initial_state()
 	_test_move_blocked_by_wall_and_block()
+	_test_face_turns_without_moving()
 	_test_move_blocked_by_bomb()
 	_test_place_bomb_and_capacity()
 	_test_bomb_destroys_block_and_scores()
@@ -31,6 +32,7 @@ func run() -> void:
 	_test_game_over_when_lives_run_out()
 	_test_time_up_costs_a_life()
 	_test_blast_kills_enemy()
+	_test_chain_kill_bonus_and_popups()
 	_test_enemy_moves()
 	_test_enemy_blocked_by_walls()
 	_test_enemy_blocked_by_bomb()
@@ -110,6 +112,19 @@ func _test_move_blocked_by_wall_and_block() -> void:
 	assert_eq(s.player.cell, Vector2i(1, 2), "位置更新")
 	assert_eq(s.player.facing, Vector2i(0, 1), "朝向更新")
 	assert_false(s.move_player(Vector2i.ZERO), "零向量不是合法移动")
+
+
+func _test_face_turns_without_moving() -> void:
+	var s := _session(ROOM)
+	assert_eq(s.player.facing, Vector2i(0, 1), "初始朝下")
+	s.face(Vector2i(-1, 0))
+	assert_eq(s.player.facing, Vector2i(-1, 0), "撞墙方向也能立刻转身")
+	assert_eq(s.player.cell, Vector2i(1, 1), "转向不改变位置")
+	s.face(Vector2i.ZERO)
+	assert_eq(s.player.facing, Vector2i(-1, 0), "零向量不改变朝向")
+	s.phase = GameSession.Phase.GAME_OVER
+	s.face(Vector2i(1, 0))
+	assert_eq(s.player.facing, Vector2i(-1, 0), "非游玩阶段不允许转向")
 
 
 func _test_move_blocked_by_bomb() -> void:
@@ -222,6 +237,30 @@ func _test_blast_kills_enemy() -> void:
 	assert_false(e.alive, "被火焰覆盖的敌人阵亡")
 	assert_eq(s.remaining_enemies(), 0, "场上敌人清空")
 	assert_eq(s.level_score, GameSession.SCORE_BLOCK + GameSession.SCORE_ENEMY, "击杀敌人得分")
+
+
+func _test_chain_kill_bonus_and_popups() -> void:
+	# 一次爆炸同时清掉两只敌人：除基础分外还有连锁奖励。
+	var s := _session(OPEN)
+	var first := Enemy.new(0, Vector2i(2, 1), 0, 99.0)
+	var second := Enemy.new(1, Vector2i(1, 2), 0, 99.0)
+	s.enemies.append(first)
+	s.enemies.append(second)
+	assert_true(s.place_bomb(), "在 (1,1) 放炸弹")
+	s.player.cell = Vector2i(5, 2)
+	s.tick(GameSession.DEFAULT_FUSE + 0.1)
+	assert_false(first.alive, "第一只敌人阵亡")
+	assert_false(second.alive, "第二只敌人阵亡")
+	assert_eq(
+		s.level_score,
+		GameSession.SCORE_ENEMY * 2 + GameSession.SCORE_ENEMY,
+		"两连杀拿到额外连锁奖励"
+	)
+
+	var popups := s.pop_popups()
+	assert_eq(popups.size(), 3, "两只敌人各一条飘分，外加一条连锁提示")
+	assert_true(popups.any(func(p): return p["kind"] == "chain"), "存在连锁提示")
+	assert_eq(s.pop_popups().size(), 0, "取走后飘分队列清空")
 
 
 func _test_enemy_moves() -> void:

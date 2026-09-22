@@ -83,6 +83,39 @@ const SFX_PATHS := {
 }
 const SFX_VOICES := 8
 
+## BGM 与「非事件型」音效（脚步、引信滴答、过关 jingle）单独走路径。
+const BGM_TITLE := "res://assets/audio/bgm_title.wav"
+const BGM_PLAY := "res://assets/audio/bgm_play.wav"
+const SFX_FUSE := "res://assets/audio/fuse.wav"
+const SFX_STEP := "res://assets/audio/step.wav"
+const SFX_CLEAR := "res://assets/audio/level_clear2.wav"
+
+## 时间紧迫时 BGM 升调加速，复刻老式炸弹人的「hurry up」压迫感。
+const HURRY_TIME := 30.0
+const HURRY_PITCH := 1.14
+
+## 屏幕震动与打击停顿：让爆炸和阵亡「有重量」。
+const SHAKE_EXPLOSION := 0.24
+const SHAKE_PLAYER_HIT := 0.5
+const SHAKE_DURATION := 0.3
+const HITSTOP_EXPLOSION := 0.05
+const HITSTOP_PLAYER_HIT := 0.14
+
+## 引信进入这个窗口后开始滴答。
+const FUSE_TICK_WINDOW := 1.0
+
+## 飘分文字的存活时间与上浮速度。
+const POPUP_LIFE := 0.9
+const POPUP_RISE := 34.0
+const POPUP_COLORS := {
+	"kill": Color("ffe082"),
+	"power": Color("81d4fa"),
+	"chain": Color("ff8a65"),
+}
+
+## 输入缓冲：冷却期间按下的方向会被记住，冷却一结束立刻执行，避免「点了没反应」。
+const INPUT_BUFFER := 0.14
+
 const COLOR_BG := Color("12102a")
 const COLOR_HUD_PANEL := Color("f7d6e6")
 const COLOR_HUD_EDGE := Color("e091b8")
@@ -101,6 +134,8 @@ var _tex: Dictionary = {}
 var _sfx: Dictionary = {}
 var _voices: Array[AudioStreamPlayer] = []
 var _font: Font = ThemeDB.fallback_font
+var _bgm: AudioStreamPlayer
+var _bgm_path := ""
 
 ## 玩家与敌人的「视觉格坐标」，用插值追赶逻辑格坐标，做出平滑移动。
 var _player_pos := Vector2.ZERO
@@ -111,6 +146,16 @@ var _anim_time := 0.0
 var _banner_time := 0.0
 var _banner_text := ""
 
+## 手感相关的瞬时状态。
+var _shake_time := 0.0
+var _shake_power := 0.0
+var _hitstop := 0.0
+var _fuse_timer := 0.0
+var _buffer_dir := Vector2i.ZERO
+var _buffer_left := 0.0
+## 飘分文字：{text, kind, pos(像素), life}
+var _popups: Array[Dictionary] = []
+
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -118,6 +163,17 @@ func _ready() -> void:
 	_load_textures()
 	_load_sfx()
 	_new_session()
+	_play_bgm(BGM_TITLE)
+
+
+## 退出时停掉 BGM。
+## 注意：Godot 4.3 的 AudioStreamPlayer.stop() 要等下一次音频混音才释放 playback，
+## 而退出后不会再有混音，所以 --quit-after 这类强制退出仍会打印一条
+## "resources still in use: bgm_*.wav" 的引擎警告。不影响运行，仅退出日志噪声。
+func _exit_tree() -> void:
+	if _bgm != null:
+		_bgm.stop()
+		_bgm.stream = null
 
 
 # ---------------------------------------------------------------- 资源加载
@@ -156,17 +212,51 @@ func _load_sfx() -> void:
 		var path: String = SFX_PATHS[event]
 		if ResourceLoader.exists(path):
 			_sfx[event] = load(path)
+	for path in [SFX_FUSE, SFX_STEP, SFX_CLEAR]:
+		if ResourceLoader.exists(path):
+			_sfx[path] = load(path)
 	for i in SFX_VOICES:
 		var player := AudioStreamPlayer.new()
 		player.bus = "Master"
 		add_child(player)
 		_voices.append(player)
 
+	_bgm = AudioStreamPlayer.new()
+	_bgm.bus = "Master"
+	_bgm.volume_db = -7.0
+	add_child(_bgm)
+
+
+## 切换 BGM。同一首重复调用不会打断播放。
+func _play_bgm(path: String) -> void:
+	if _bgm == null or path == _bgm_path or not ResourceLoader.exists(path):
+		return
+	var stream: AudioStream = load(path)
+	if stream is AudioStreamWAV:
+		# WAV 的循环标记在导入设置里，运行时显式打开更稳。
+		var bytes_per_frame := 2 if stream.format == AudioStreamWAV.FORMAT_16_BITS else 1
+		if stream.stereo:
+			bytes_per_frame *= 2
+		stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		stream.loop_end = stream.data.size() / bytes_per_frame
+	_bgm_path = path
+	_bgm.stream = stream
+	_bgm.play()
+
+
+func _play_path(path: String) -> void:
+	var stream: AudioStream = _sfx.get(path)
+	if stream != null:
+		_play_stream(stream)
+
 
 func _play_sfx(event: String) -> void:
 	var stream: AudioStream = _sfx.get(event)
-	if stream == null:
-		return
+	if stream != null:
+		_play_stream(stream)
+
+
+func _play_stream(stream: AudioStream) -> void:
 	for player in _voices:
 		if not player.playing:
 			player.stream = stream
@@ -181,6 +271,13 @@ func _new_session() -> void:
 	_sync_visual_positions(true)
 	_banner_text = "第 1 关 开始！"
 	_banner_time = 1.6
+	_shake_time = 0.0
+	_shake_power = 0.0
+	_hitstop = 0.0
+	_fuse_timer = 0.0
+	_buffer_dir = Vector2i.ZERO
+	_buffer_left = 0.0
+	_popups.clear()
 
 
 ## 让视觉坐标立刻对齐逻辑坐标（重开、换关、复活时用，避免出现横穿地图的滑动）。
@@ -207,19 +304,28 @@ func _handle_key(keycode: int) -> void:
 	match _scene:
 		Scene.TITLE:
 			if keycode == KEY_SPACE or keycode == KEY_ENTER:
-				_scene = Scene.SELECT
+				_go_to(Scene.SELECT)
 		Scene.SELECT:
 			if keycode == KEY_A or keycode == KEY_LEFT:
 				_selected_char = wrapi(_selected_char - 1, 0, CHAR_SHEETS.size())
 			elif keycode == KEY_D or keycode == KEY_RIGHT:
 				_selected_char = wrapi(_selected_char + 1, 0, CHAR_SHEETS.size())
 			elif keycode == KEY_SPACE or keycode == KEY_ENTER:
-				_scene = Scene.PLAY
+				_go_to(Scene.PLAY)
 				_new_session()
 			elif keycode == KEY_ESCAPE:
-				_scene = Scene.TITLE
+				_go_to(Scene.TITLE)
 		Scene.PLAY:
 			_handle_play_key(keycode)
+
+
+## 切换场景时同步切换 BGM：标题/选人用舒缓版，对局用欢快版。
+func _go_to(scene: int) -> void:
+	_scene = scene
+	_paused = false
+	_play_bgm(BGM_PLAY if scene == Scene.PLAY else BGM_TITLE)
+	if scene == Scene.TITLE and _bgm != null:
+		_bgm.pitch_scale = 1.0
 
 
 func _handle_play_key(keycode: int) -> void:
@@ -229,7 +335,7 @@ func _handle_play_key(keycode: int) -> void:
 		KEY_P:
 			_paused = not _paused
 		KEY_ESCAPE:
-			_scene = Scene.SELECT
+			_go_to(Scene.SELECT)
 		KEY_SPACE:
 			if session.place_bomb():
 				_move_cooldown = 0.05
@@ -241,27 +347,53 @@ func _handle_play_key(keycode: int) -> void:
 
 
 ## 方向键 / WASD 用轮询而不是事件，这样按住可以连续走格。
+## 两个手感要点：
+##   1. 转向即时生效（撞墙也会转身），按下去立刻有反馈；
+##   2. 冷却期间按下的方向进缓冲，冷却一结束立刻执行，避免「点了没反应」。
 func _poll_movement(delta: float) -> void:
 	_move_cooldown = maxf(_move_cooldown - delta, 0.0)
-	if _move_cooldown > 0.0 or not session.is_playing():
+	_buffer_left = maxf(_buffer_left - delta, 0.0)
+
+	var held := _held_direction()
+	if held != Vector2i.ZERO:
+		_buffer_dir = held
+		_buffer_left = INPUT_BUFFER
+	var direction := held
+	if direction == Vector2i.ZERO and _buffer_left > 0.0:
+		direction = _buffer_dir
+
+	if direction == Vector2i.ZERO or not session.is_playing():
 		return
-	var direction := Vector2i.ZERO
+
+	# 转向先于移动生效，撞墙时也能看到角色转身。
+	session.face(direction)
+
+	if _move_cooldown > 0.0:
+		return
+
+	if session.move_player(direction):
+		_buffer_left = 0.0
+		_move_cooldown = _step_duration()
+		_play_path(SFX_STEP)
+	else:
+		# 撞墙只给很短冷却，避免按住方向键时贴墙卡顿。
+		_move_cooldown = 0.05
+
+
+func _held_direction() -> Vector2i:
 	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
-		direction = Vector2i(0, -1)
-	elif Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
-		direction = Vector2i(0, 1)
-	elif Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
-		direction = Vector2i(-1, 0)
-	elif Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
-		direction = Vector2i(1, 0)
-	if direction == Vector2i.ZERO:
-		return
-	# 走得动就按速度给冷却；撞墙只给很短冷却，避免按住方向键时贴墙卡顿。
-	_move_cooldown = _step_duration() if session.move_player(direction) else 0.05
+		return Vector2i(0, -1)
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+		return Vector2i(0, 1)
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+		return Vector2i(-1, 0)
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+		return Vector2i(1, 0)
+	return Vector2i.ZERO
 
 
 func _step_duration() -> float:
-	return clampf(0.62 / maxf(session.player.speed, 0.5), 0.07, 0.4)
+	return clampf(0.56 / maxf(session.player.speed, 0.5), 0.06, 0.34)
 
 
 # ---------------------------------------------------------------- 主循环
@@ -269,24 +401,91 @@ func _step_duration() -> float:
 func _process(delta: float) -> void:
 	_anim_time += delta
 	_banner_time = maxf(_banner_time - delta, 0.0)
+	_update_shake(delta)
+	_update_popups(delta)
 
 	if _scene == Scene.PLAY:
 		if not _paused:
-			session.tick(delta)
-			_poll_movement(delta)
-			_drain_events()
+			# 打击停顿：爆炸/阵亡瞬间冻结逻辑几十毫秒，让冲击有分量。
+			if _hitstop > 0.0:
+				_hitstop = maxf(_hitstop - delta, 0.0)
+			else:
+				session.tick(delta)
+				_poll_movement(delta)
+				_drain_events()
+				_update_fuse_tick(delta)
+			_update_hurry()
 		_update_visual_positions(delta)
 
 	queue_redraw()
+
+
+## 屏幕震动：按剩余时间线性衰减的随机偏移。
+func _update_shake(delta: float) -> void:
+	_shake_time = maxf(_shake_time - delta, 0.0)
+	if _shake_time <= 0.0:
+		_shake_power = 0.0
+
+
+func _add_shake(power: float) -> void:
+	_shake_power = maxf(_shake_power, power)
+	_shake_time = SHAKE_DURATION
+
+
+func _shake_offset() -> Vector2:
+	if _shake_time <= 0.0 or _shake_power <= 0.0:
+		return Vector2.ZERO
+	var amp := _shake_power * clampf(_shake_time / SHAKE_DURATION, 0.0, 1.0)
+	return Vector2(randf_range(-amp, amp), randf_range(-amp, amp))
+
+
+## 引信滴答：场上最急的那颗炸弹越接近爆炸，滴答越密，制造紧张感。
+func _update_fuse_tick(delta: float) -> void:
+	var most_urgent := INF
+	for bomb in session.bombs:
+		if not bomb.remote:
+			most_urgent = minf(most_urgent, bomb.fuse)
+	if most_urgent == INF or most_urgent > FUSE_TICK_WINDOW:
+		_fuse_timer = 0.0
+		return
+	_fuse_timer -= delta
+	if _fuse_timer > 0.0:
+		return
+	_play_path(SFX_FUSE)
+	_fuse_timer = lerpf(0.09, 0.3, clampf(most_urgent / FUSE_TICK_WINDOW, 0.0, 1.0))
+
+
+## 时间所剩无几时给 BGM 升调加速，复刻老式炸弹人的「hurry up」压迫感。
+func _update_hurry() -> void:
+	if _bgm == null:
+		return
+	var hurry := session.is_playing() and session.time_left < HURRY_TIME
+	_bgm.pitch_scale = HURRY_PITCH if hurry else 1.0
+
+
+func _update_popups(delta: float) -> void:
+	for i in range(_popups.size() - 1, -1, -1):
+		var entry: Dictionary = _popups[i]
+		entry["life"] -= delta
+		entry["pos"] += Vector2(0.0, -POPUP_RISE * delta)
+		if entry["life"] <= 0.0:
+			_popups.remove_at(i)
 
 
 func _drain_events() -> void:
 	for event in session.pop_events():
 		_play_sfx(event)
 		match event:
+			GameSession.EVENT_EXPLOSION:
+				_add_shake(SHAKE_EXPLOSION)
+				_hitstop = maxf(_hitstop, HITSTOP_EXPLOSION)
+			GameSession.EVENT_PLAYER_HIT:
+				_add_shake(SHAKE_PLAYER_HIT)
+				_hitstop = maxf(_hitstop, HITSTOP_PLAYER_HIT)
 			GameSession.EVENT_LEVEL_CLEAR:
 				_banner_text = "过关！"
 				_banner_time = 1.6
+				_play_path(SFX_CLEAR)
 			GameSession.EVENT_EXIT_FOUND:
 				_banner_text = "发现出口！"
 				_banner_time = 1.6
@@ -296,12 +495,21 @@ func _drain_events() -> void:
 			GameSession.EVENT_RESPAWN:
 				_sync_visual_positions(true)
 
+	for entry in session.pop_popups():
+		_popups.append({
+			"text": entry["text"],
+			"kind": entry["kind"],
+			"pos": _center_of(Vector2(entry["cell"])) + Vector2(0, -CELL * 0.2),
+			"life": POPUP_LIFE,
+		})
 
-## 视觉坐标以固定速度追赶逻辑坐标，追赶速度略快于走一格的时间，保证落点不拖沓。
+
+## 视觉坐标以固定速度追赶逻辑坐标。追赶速度取「走一格时间的 1.15 倍」，
+## 让精灵在一格冷却结束前刚好到位，连起来是连续滑动而不是走一步停一下。
 func _update_visual_positions(delta: float) -> void:
 	if session.player.alive:
 		var target := Vector2(session.player.cell)
-		var catch_up := maxf(7.0, session.player.speed * 2.4)
+		var catch_up := 1.15 / _step_duration()
 		_walking = _player_pos.distance_to(target) > 0.04
 		_player_pos = _player_pos.move_toward(target, catch_up * delta)
 	else:
@@ -314,7 +522,7 @@ func _update_visual_positions(delta: float) -> void:
 		if not enemy.alive:
 			continue
 		var target := Vector2(enemy.cell)
-		var speed := 1.0 / maxf(enemy.move_interval, 0.05) * 1.6
+		var speed := 1.25 / maxf(enemy.move_interval, 0.05)
 		_enemy_pos[i] = _enemy_pos[i].move_toward(target, speed * delta)
 
 
@@ -332,15 +540,30 @@ func _draw() -> void:
 
 
 func _draw_play() -> void:
+	# 只让棋盘内容震动，HUD 与横幅保持稳定，避免文字抖到看不清。
+	draw_set_transform(_shake_offset())
 	_draw_board()
 	_draw_exit()
 	_draw_powerups()
-	_draw_bombs()
 	_draw_blasts()
 	_draw_enemies()
 	_draw_player()
+	# 炸弹画在角色之后：站在自己刚放的炸弹上时也必须看得见它，否则容易误踩送命。
+	_draw_bombs()
+	_draw_popups()
+	draw_set_transform(Vector2.ZERO)
 	_draw_hud()
 	_draw_banner()
+
+
+func _draw_popups() -> void:
+	for entry in _popups:
+		var alpha := clampf(entry["life"] / POPUP_LIFE, 0.0, 1.0)
+		var color: Color = POPUP_COLORS.get(entry["kind"], Color.WHITE)
+		color.a = alpha
+		var size := 26 if entry["kind"] == "chain" else 20
+		var pos: Vector2 = entry["pos"]
+		_text_center(pos.x, pos.y, entry["text"], size, color)
 
 
 func _cell_rect(cell: Vector2i) -> Rect2:

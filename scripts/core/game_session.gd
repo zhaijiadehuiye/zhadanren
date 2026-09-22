@@ -72,6 +72,8 @@ var phase_time_left: float = 0.0
 var powerup_drop_chance: float = POWERUP_DROP_CHANCE
 ## 待视图层消费的事件队列。
 var events: Array[String] = []
+## 待视图层消费的「飘分」反馈：{cell: Vector2i, text: String, kind: String}。
+var popups: Array[Dictionary] = []
 
 var _rng: RandomNumberGenerator
 var _spawn_cell: Vector2i = LevelData.PLAYER_SPAWN
@@ -113,6 +115,7 @@ func start_level(p_index: int) -> void:
 	phase = Phase.PLAYING
 	phase_time_left = 0.0
 	events.clear()
+	popups.clear()
 
 	player.cell = _spawn_cell
 	player.alive = true
@@ -147,6 +150,13 @@ func tick(delta: float) -> void:
 func pop_events() -> Array[String]:
 	var drained := events.duplicate()
 	events.clear()
+	return drained
+
+
+## 取走并清空飘分队列。
+func pop_popups() -> Array[Dictionary]:
+	var drained := popups.duplicate()
+	popups.clear()
 	return drained
 
 
@@ -186,6 +196,13 @@ func is_exit_active() -> bool:
 
 func is_playing() -> bool:
 	return phase == Phase.PLAYING
+
+
+## 只转向不移动。撞墙时也改变朝向，让操作立刻有视觉反馈。
+func face(direction: Vector2i) -> void:
+	if phase != Phase.PLAYING or not player.alive or direction == Vector2i.ZERO:
+		return
+	player.facing = direction
 
 
 ## 玩家能否朝该方向走一格。
@@ -314,7 +331,7 @@ func _detonate(bomb: Bomb) -> void:
 		if chained != null:
 			_detonate(chained)
 
-	_kill_enemies_in(cells)
+	_kill_enemies_in(cells, bomb.cell)
 	_hit_player_in(cells)
 
 
@@ -356,6 +373,7 @@ func _pickup_powerups() -> void:
 			_add_score(SCORE_POWERUP)
 			taken.append(item)
 			events.append(EVENT_POWERUP)
+			popups.append({"cell": item.cell, "text": "+%d" % SCORE_POWERUP, "kind": "power"})
 	for item in taken:
 		powerups.erase(item)
 
@@ -400,12 +418,20 @@ func _check_enemy_collision() -> void:
 		_kill_player()
 
 
-func _kill_enemies_in(cells: Array[Vector2i]) -> void:
+func _kill_enemies_in(cells: Array[Vector2i], origin: Vector2i) -> void:
+	var killed := 0
 	for e in enemies:
 		if e.alive and cells.has(e.cell):
 			e.alive = false
 			_add_score(SCORE_ENEMY)
 			events.append(EVENT_ENEMY_KILLED)
+			popups.append({"cell": e.cell, "text": "+%d" % SCORE_ENEMY, "kind": "kill"})
+			killed += 1
+	if killed >= 2:
+		# 一次爆炸清掉多只敌人：按多杀的数量给连锁奖励，鼓励把敌人聚到一起再炸。
+		var bonus := SCORE_ENEMY * (killed - 1)
+		_add_score(bonus)
+		popups.append({"cell": origin, "text": "连锁 x%d  +%d" % [killed, bonus], "kind": "chain"})
 
 
 func _hit_player_in(cells: Array[Vector2i]) -> void:
