@@ -1,0 +1,12 @@
+# Godot 4 生成物
+.godot/
+/android/
+export_presets.cfg
+*.translation
+
+# 构建 / 导出产物
+/build/
+/export/
+
+# macOS
+.DS_Store
