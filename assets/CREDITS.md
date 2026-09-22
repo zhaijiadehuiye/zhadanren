@@ -1,7 +1,7 @@
 # 素材署名与来源（CREDITS）
 
 本项目的美术素材与一部分音效来自 **Ninja Adventure Asset Pack**；BGM 与手感类音效
-（`bgm_*.wav` / `fuse.wav` / `step.wav` / `level_clear2.wav` / `ready.wav` / `go.wav`）
+（`bgm_*.wav` / `fuse.wav` / `step.wav` / `level_clear2.wav` / `ready.wav` / `go.wav` / `punch.wav`）
 为本项目**原创合成**，不引用任何第三方作品，无版权风险。
 
 | 项目 | 内容 |
@@ -75,6 +75,7 @@
 | `powerup_fire.png` | 火力 +1 | `Items/Scroll/ScrollFire.png` | 16×16 |
 | `powerup_speed.png` | 速度 +1 | `Ui/Shuriken.png` | 16×16 |
 | `powerup_remote.png` | 遥控引爆 | `Items/Other/Stamp.png` | 9×9 |
+| `powerup_glove.png` | 推炸弹（拳击手套） | 本项目原创（16×16 点阵手绘） | 16×16 |
 
 ### 音效 `assets/audio/`
 
@@ -105,6 +106,7 @@
 | `level_clear2.wav` | 过关 jingle | 0.88s | 过关瞬间播放的欢快上行音阶 |
 | `ready.wav` | 开局报数 | 0.12s | READY 倒计时每跳一个数字响一声 |
 | `go.wav` | 开始 | 0.27s | 倒计时结束的「GO」上行三音 |
+| `punch.wav` | 出拳推炸弹 | 0.22s | 低频闷响 + 短促噪声，`J` 推炸弹时播放 |
 
 所有音频均为 16-bit PCM 立体声 44100Hz；生成时按目标 RMS 归一化并做 0.95 峰值限幅，
 保证不同音效之间响度一致。
