@@ -1,8 +1,8 @@
 # 素材署名与来源（CREDITS）
 
 本项目的美术素材与一部分音效来自 **Ninja Adventure Asset Pack**；BGM 与手感类音效
-（`bgm_*.wav` / `fuse.wav` / `step.wav` / `level_clear2.wav`）为本项目**原创合成**，
-不引用任何第三方作品，无版权风险。
+（`bgm_*.wav` / `fuse.wav` / `step.wav` / `level_clear2.wav` / `ready.wav` / `go.wav`）
+为本项目**原创合成**，不引用任何第三方作品，无版权风险。
 
 | 项目 | 内容 |
 | --- | --- |
@@ -103,6 +103,8 @@
 | `fuse.wav` | 引信滴答 | 0.05s | 场上最急的炸弹进入最后 1s 后开始滴答 |
 | `step.wav` | 脚步 | 0.07s | 每成功走一格播放一次 |
 | `level_clear2.wav` | 过关 jingle | 0.88s | 过关瞬间播放的欢快上行音阶 |
+| `ready.wav` | 开局报数 | 0.12s | READY 倒计时每跳一个数字响一声 |
+| `go.wav` | 开始 | 0.27s | 倒计时结束的「GO」上行三音 |
 
 所有音频均为 16-bit PCM 立体声 44100Hz；生成时按目标 RMS 归一化并做 0.95 峰值限幅，
 保证不同音效之间响度一致。
