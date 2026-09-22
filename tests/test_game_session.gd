@@ -20,6 +20,7 @@ const OPEN := [
 
 func run() -> void:
 	_test_initial_state()
+	_test_ready_countdown_blocks_input()
 	_test_move_blocked_by_wall_and_block()
 	_test_face_turns_without_moving()
 	_test_move_blocked_by_bomb()
@@ -91,7 +92,7 @@ func _session(rows: Array, player_cell: Vector2i = Vector2i(1, 1)) -> GameSessio
 func _test_initial_state() -> void:
 	var s := GameSession.new(_seeded_rng())
 	assert_eq(s.level_index, 0, "开局从第 1 关开始")
-	assert_eq(s.phase, GameSession.Phase.PLAYING, "开局处于游玩阶段")
+	assert_eq(s.phase, GameSession.Phase.READY, "开局先进入准备倒计时")
 	assert_eq(s.player.lives, PlayerState.DEFAULT_LIVES, "默认 3 条命")
 	assert_eq(s.player.cell, LevelData.PLAYER_SPAWN, "玩家出生在左上角")
 	assert_eq(s.enemies.size(), LevelData.enemy_count(0), "敌人数量取自关卡配置")
@@ -99,6 +100,26 @@ func _test_initial_state() -> void:
 	assert_eq(s.remaining_enemies(), LevelData.enemy_count(0), "开局敌人全在")
 	assert_false(s.exit_revealed, "开局出口是隐藏的")
 	assert_false(s.is_exit_active(), "开局出口未开启")
+
+
+func _test_ready_countdown_blocks_input() -> void:
+	var s := GameSession.new(_seeded_rng())
+	assert_false(s.is_playing(), "准备倒计时期间不算游玩中")
+	assert_false(s.move_player(Vector2i(0, 1)), "倒计时期间不能移动")
+	assert_false(s.place_bomb(), "倒计时期间不能放炸弹")
+	assert_eq(s.player.cell, LevelData.PLAYER_SPAWN, "倒计时期间位置不变")
+
+	var before := s.time_left
+	s.tick(GameSession.READY_TIME - 0.01)
+	assert_eq(s.phase, GameSession.Phase.READY, "倒计时没走完仍是准备阶段")
+	assert_eq(s.time_left, before, "准备阶段不消耗关卡时间")
+	assert_false(s.events.has(GameSession.EVENT_LEVEL_START), "倒计时期间不发开局事件")
+
+	s.tick(0.02)
+	assert_eq(s.phase, GameSession.Phase.PLAYING, "倒计时结束进入游玩阶段")
+	assert_true(s.events.has(GameSession.EVENT_LEVEL_START), "发出开局事件")
+	assert_true(s.is_playing(), "此时才算游玩中")
+	assert_true(s.move_player(Vector2i(0, 1)), "开始后可以移动")
 
 
 func _test_move_blocked_by_wall_and_block() -> void:
@@ -402,12 +423,15 @@ func _test_next_level_advances() -> void:
 	assert_true(s.level_score > 0, "过关拿到时间奖励分")
 	s.tick(GameSession.LEVEL_CLEAR_DELAY + 0.01)
 	assert_eq(s.level_index, 1, "进入第 2 关")
-	assert_eq(s.phase, GameSession.Phase.PLAYING, "回到游玩阶段")
+	assert_eq(s.phase, GameSession.Phase.READY, "新关卡重新进入准备倒计时")
+	assert_eq(s.phase_time_left, GameSession.READY_TIME, "准备倒计时从满开始")
 	assert_eq(s.enemies.size(), LevelData.enemy_count(1), "第 2 关敌人数量正确")
 	assert_eq(s.time_left, LevelData.time_limit(1), "第 2 关时间重置")
 	assert_false(s.exit_revealed, "新关卡出口重新隐藏")
 	assert_eq(s.level_score, 0, "新关卡关卡分数清零")
 	assert_true(s.total_score > 0, "总分跨关累计")
+	s.tick(GameSession.READY_TIME + 0.01)
+	assert_eq(s.phase, GameSession.Phase.PLAYING, "倒计时结束后开始第 2 关")
 
 
 func _test_campaign_complete_after_last_level() -> void:
@@ -440,7 +464,7 @@ func _test_restart_game() -> void:
 	assert_eq(s.player.lives, PlayerState.DEFAULT_LIVES, "生命恢复")
 	assert_eq(s.player.power, PlayerState.DEFAULT_POWER, "成长数值重置")
 	assert_eq(s.level_index, 0, "回到第 1 关")
-	assert_eq(s.phase, GameSession.Phase.PLAYING, "回到游玩阶段")
+	assert_eq(s.phase, GameSession.Phase.READY, "重开后回到准备倒计时")
 	assert_false(s.campaign_cleared, "清除通关标记")
 
 

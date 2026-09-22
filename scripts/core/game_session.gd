@@ -7,8 +7,9 @@ extends RefCounted
 ##
 ## 不依赖场景树、Input、Time 或任何渲染 API，因此可以在 headless 下完整单测。
 
-## 关卡内的大阶段。LEVEL_CLEAR / DYING 是过渡阶段，只倒计时，不推进玩法。
+## 关卡内的大阶段。READY / LEVEL_CLEAR / DYING 是过渡阶段，只倒计时，不推进玩法。
 enum Phase {
+	READY, ## 开局倒计时：玩家与敌人都冻结，关卡时间不流逝
 	PLAYING, ## 正常游玩
 	LEVEL_CLEAR, ## 过关结算过渡
 	DYING, ## 玩家阵亡过渡，倒计时结束后复活
@@ -20,6 +21,8 @@ const BLAST_DURATION := 0.45
 const POWERUP_DROP_CHANCE := 0.3
 const LEVEL_CLEAR_DELAY := 1.8
 const DYING_DELAY := 1.5
+## 开局「准备 → 开始」的倒计时长度。经典炸弹人用这段静止时间让玩家看清地图。
+const READY_TIME := 2.0
 
 const SCORE_BLOCK := 10
 const SCORE_ENEMY := 200
@@ -30,6 +33,7 @@ const SCORE_TIME_PER_SECOND := 5
 ## 视图层消费的事件名（用常量避免拼写漂移）。每帧通过 pop_events() 取走。
 const EVENT_EXPLOSION := "explosion"
 const EVENT_PLACE_BOMB := "place_bomb"
+const EVENT_LEVEL_START := "level_start"
 const EVENT_POWERUP := "powerup"
 const EVENT_ENEMY_KILLED := "enemy_killed"
 const EVENT_PLAYER_HIT := "player_hit"
@@ -112,8 +116,8 @@ func start_level(p_index: int) -> void:
 	blast_time_left = 0.0
 	time_left = LevelData.time_limit(level_index)
 	level_score = 0
-	phase = Phase.PLAYING
-	phase_time_left = 0.0
+	phase = Phase.READY
+	phase_time_left = READY_TIME
 	events.clear()
 	popups.clear()
 
@@ -136,6 +140,12 @@ func restart_game() -> void:
 ## 推进一帧逻辑。
 func tick(delta: float) -> void:
 	match phase:
+		Phase.READY:
+			# 准备阶段：只走倒计时，玩家、敌人与关卡时间全部冻结。
+			phase_time_left = maxf(phase_time_left - delta, 0.0)
+			if phase_time_left <= 0.0:
+				phase = Phase.PLAYING
+				events.append(EVENT_LEVEL_START)
 		Phase.PLAYING:
 			_tick_playing(delta)
 		Phase.LEVEL_CLEAR, Phase.DYING:
