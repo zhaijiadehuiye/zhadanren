@@ -10,6 +10,9 @@ const MAX_POWER := 8
 const MAX_SPEED := 6.0
 const SPEED_STEP := 0.5
 const SHIELD_DURATION := 8.0
+const DEFAULT_LIVES := 3
+## 复活后附带的短暂无敌时间，避免刚出生就被贴脸的敌人或火焰秒杀。
+const RESPAWN_SHIELD := 2.0
 
 var id: int = 0
 var cell: Vector2i = Vector2i.ZERO
@@ -18,6 +21,11 @@ var bomb_capacity: int = DEFAULT_BOMB_CAPACITY
 var power: int = DEFAULT_POWER
 var speed: float = DEFAULT_SPEED
 var shield_time: float = 0.0
+var lives: int = DEFAULT_LIVES
+## 是否已获得遥控引爆能力（吃到遥控道具后永久生效）。
+var remote_capable: bool = false
+## 最近一次的移动朝向，供渲染层选方向贴图。
+var facing: Vector2i = Vector2i(0, 1)
 ## 当前已放置、尚未爆炸的炸弹数。
 var bombs_placed: int = 0
 
@@ -45,6 +53,16 @@ func apply_powerup(kind: int) -> void:
 			speed = minf(speed + SPEED_STEP, MAX_SPEED)
 		Tiles.PowerUp.SHIELD:
 			shield_time = SHIELD_DURATION
+		Tiles.PowerUp.REMOTE:
+			remote_capable = true
+
+
+## 复活：清掉临时状态并给一段无敌时间，成长数值（炸弹数/火力/速度/遥控）保留。
+func reset_for_respawn(p_cell: Vector2i) -> void:
+	cell = p_cell
+	alive = true
+	bombs_placed = 0
+	shield_time = RESPAWN_SHIELD
 
 
 func tick(delta: float) -> void:

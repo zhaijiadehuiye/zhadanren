@@ -51,13 +51,3 @@ static func clear_spawn_area(grid: BombGrid, spawn: Vector2i) -> void:
 	for cell in area:
 		if grid.get_kind(cell.x, cell.y) == Tiles.Kind.BLOCK:
 			grid.set_kind(cell.x, cell.y, Tiles.Kind.EMPTY)
-
-
-## 四角出生点（最多支持 4 人对战）。
-static func corner_spawns(p_width: int, p_height: int) -> Array[Vector2i]:
-	return [
-		Vector2i(1, 1),
-		Vector2i(p_width - 2, 1),
-		Vector2i(1, p_height - 2),
-		Vector2i(p_width - 2, p_height - 2),
-	]

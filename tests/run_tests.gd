@@ -12,9 +12,11 @@ const TEST_SCRIPTS := [
 	"res://tests/test_grid.gd",
 	"res://tests/test_explosion.gd",
 	"res://tests/test_level.gd",
+	"res://tests/test_level_data.gd",
 	"res://tests/test_bomb.gd",
+	"res://tests/test_enemy.gd",
 	"res://tests/test_player_state.gd",
-	"res://tests/test_match.gd",
+	"res://tests/test_game_session.gd",
 ]
 
 

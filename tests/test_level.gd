@@ -5,7 +5,6 @@ extends TestCase
 func run() -> void:
 	_test_border_and_pillars()
 	_test_spawn_area_cleared()
-	_test_corner_spawns()
 
 
 func _seeded_rng() -> RandomNumberGenerator:
@@ -15,7 +14,7 @@ func _seeded_rng() -> RandomNumberGenerator:
 
 
 func _test_border_and_pillars() -> void:
-	var spawns := Level.corner_spawns(15, 13)
+	var spawns: Array[Vector2i] = [LevelData.PLAYER_SPAWN]
 	var grid := Level.classic(15, 13, spawns, _seeded_rng())
 	assert_eq(grid.width, 15, "宽度")
 	assert_eq(grid.height, 13, "高度")
@@ -34,10 +33,3 @@ func _test_spawn_area_cleared() -> void:
 	assert_eq(grid.get_kind(1, 1), Tiles.Kind.EMPTY, "出生点必须为空地")
 	assert_eq(grid.get_kind(2, 1), Tiles.Kind.EMPTY, "出生点右侧一格必须为空地")
 	assert_eq(grid.get_kind(1, 2), Tiles.Kind.EMPTY, "出生点下方一格必须为空地")
-
-
-func _test_corner_spawns() -> void:
-	var spawns := Level.corner_spawns(15, 13)
-	assert_eq(spawns.size(), 4, "默认 4 个角")
-	assert_eq(spawns[0], Vector2i(1, 1), "左上角出生点")
-	assert_eq(spawns[3], Vector2i(13, 11), "右下角出生点")

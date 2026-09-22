@@ -42,7 +42,7 @@ func set_kind(x: int, y: int, kind: int) -> void:
 
 
 func is_walkable(x: int, y: int) -> bool:
-	return in_bounds(x, y) and get_kind(x, y) == Tiles.Kind.EMPTY
+	return in_bounds(x, y) and Tiles.is_walkable_kind(get_kind(x, y))
 
 
 func is_solid(x: int, y: int) -> bool:
@@ -63,7 +63,7 @@ func duplicate_grid() -> BombGrid:
 	return copy
 
 
-## 转成便于测试与调试的 ASCII 地图：'#' 硬墙，'x' 软方块，'.' 空地。
+## 转成便于测试与调试的 ASCII 地图：'#' 硬墙，'x' 软砖，'E' 出口，'.' 空地。
 func to_ascii() -> String:
 	var lines := PackedStringArray()
 	for y in height:
@@ -74,6 +74,8 @@ func to_ascii() -> String:
 					line += "#"
 				Tiles.Kind.BLOCK:
 					line += "x"
+				Tiles.Kind.EXIT:
+					line += "E"
 				_:
 					line += "."
 		lines.append(line)
@@ -95,6 +97,8 @@ static func from_ascii(rows: PackedStringArray) -> BombGrid:
 					grid.set_kind(x, y, Tiles.Kind.WALL)
 				"x":
 					grid.set_kind(x, y, Tiles.Kind.BLOCK)
+				"E":
+					grid.set_kind(x, y, Tiles.Kind.EXIT)
 				_:
 					grid.set_kind(x, y, Tiles.Kind.EMPTY)
 	return grid
