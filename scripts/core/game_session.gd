@@ -52,6 +52,10 @@ const ENEMY_DIRECTIONS: Array[Vector2i] = [
 ]
 ## 敌人保持当前方向的概率；越大越爱直行，越小越爱拐弯。
 const ENEMY_STRAIGHT_CHANCE := 0.7
+## 追击型敌人的「专注」概率：越高越黏人，剩下的概率走神照常游走。
+const ENEMY_CHASE_FOCUS := 0.65
+## 怯懦型敌人开始躲开玩家的曼哈顿距离。
+const ENEMY_SKITTISH_RANGE := 3
 
 var level_index: int = 0
 var phase: int = Phase.PLAYING
@@ -444,9 +448,31 @@ func _update_enemies(delta: float) -> void:
 		e.cell += direction
 
 
-## 敌人选方向：只走可通行、没有炸弹、没有其它敌人的格子；
-## 大概率保持当前方向，避免在路口来回抖动。
+## 敌人选方向：先筛出可走的格子，再按各自的行为原型决定倾向。
 func _pick_enemy_direction(e: Enemy) -> Vector2i:
+	var options := _enemy_options(e)
+	if options.is_empty():
+		return Vector2i.ZERO
+	match e.behavior:
+		Enemy.Behavior.PATROL:
+			# 直行到底：只要前方能走就绝不拐弯，路线可预测。
+			return e.facing if options.has(e.facing) else _random_option(options)
+		Enemy.Behavior.CHASE:
+			# 追击：多数时候缩短与玩家的距离，偶尔走神，避免贴脸到无法摆脱。
+			if _rng.randf() < ENEMY_CHASE_FOCUS:
+				return _closest_to_player(e, options)
+			return _straight_or_random(e, options)
+		Enemy.Behavior.SKITTISH:
+			# 怯懦：玩家贴近时掉头躲开，离得远就照常游走。
+			if LevelData.manhattan(e.cell, player.cell) <= ENEMY_SKITTISH_RANGE:
+				return _farthest_from_player(e, options)
+			return _straight_or_random(e, options)
+		_:
+			return _straight_or_random(e, options)
+
+
+## 可走方向：可通行、没有炸弹、也没有其它敌人。
+func _enemy_options(e: Enemy) -> Array[Vector2i]:
 	var options: Array[Vector2i] = []
 	for d in ENEMY_DIRECTIONS:
 		var target: Vector2i = e.cell + d
@@ -457,11 +483,42 @@ func _pick_enemy_direction(e: Enemy) -> Vector2i:
 		if enemy_at(target, e) != null:
 			continue
 		options.append(d)
-	if options.is_empty():
-		return Vector2i.ZERO
+	return options
+
+
+func _random_option(options: Array[Vector2i]) -> Vector2i:
+	return options[_rng.randi_range(0, options.size() - 1)]
+
+
+## 大概率保持当前方向，避免在路口来回抖动。
+func _straight_or_random(e: Enemy, options: Array[Vector2i]) -> Vector2i:
 	if options.has(e.facing) and _rng.randf() < ENEMY_STRAIGHT_CHANCE:
 		return e.facing
-	return options[_rng.randi_range(0, options.size() - 1)]
+	return _random_option(options)
+
+
+## 可走方向里离玩家最近的一个；并列时优先保持直行。
+func _closest_to_player(e: Enemy, options: Array[Vector2i]) -> Vector2i:
+	var best: Vector2i = options[0]
+	var best_dist := LevelData.manhattan(e.cell + best, player.cell)
+	for d in options:
+		var dist := LevelData.manhattan(e.cell + d, player.cell)
+		if dist < best_dist or (dist == best_dist and d == e.facing):
+			best = d
+			best_dist = dist
+	return best
+
+
+## 可走方向里离玩家最远的一个；并列时优先保持直行。
+func _farthest_from_player(e: Enemy, options: Array[Vector2i]) -> Vector2i:
+	var best: Vector2i = options[0]
+	var best_dist := LevelData.manhattan(e.cell + best, player.cell)
+	for d in options:
+		var dist := LevelData.manhattan(e.cell + d, player.cell)
+		if dist > best_dist or (dist == best_dist and d == e.facing):
+			best = d
+			best_dist = dist
+	return best
 
 
 func _check_enemy_collision() -> void:

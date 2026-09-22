@@ -38,6 +38,9 @@ func run() -> void:
 	_test_enemy_blocked_by_walls()
 	_test_enemy_blocked_by_bomb()
 	_test_enemy_contact_kills_player()
+	_test_patrol_enemy_never_turns_until_blocked()
+	_test_chaser_picks_direction_toward_player()
+	_test_skittish_enemy_backs_away()
 	_test_powerup_pickup()
 	_test_punch_needs_glove()
 	_test_punch_slides_bomb_until_blocked()
@@ -336,6 +339,47 @@ func _test_enemy_contact_kills_player() -> void:
 	s.tick(0.05)
 	assert_eq(s.player.lives, 2, "碰到敌人扣一条命")
 	assert_eq(s.phase, GameSession.Phase.DYING, "进入阵亡过渡")
+
+
+func _test_patrol_enemy_never_turns_until_blocked() -> void:
+	# 鼹鼠（kind 4）只直行：即使沿途有岔路也一路向右，直到贴墙。
+	var s := _session(OPEN, Vector2i(1, 3))
+	var e := Enemy.new(0, Vector2i(1, 1), 4, 0.1)
+	e.facing = Vector2i(1, 0)
+	s.enemies.append(e)
+	for _i in 4:
+		s.tick(0.11)
+	assert_eq(e.cell, Vector2i(5, 1), "直行到底，撞墙前绝不拐弯")
+	assert_eq(e.facing, Vector2i(1, 0), "朝向始终不变")
+
+
+func _test_chaser_picks_direction_toward_player() -> void:
+	var s := _session(OPEN)
+	s.player.cell = Vector2i(1, 1)
+	var e := Enemy.new(0, Vector2i(4, 3), 1, 0.7)
+	assert_eq(e.behavior, Enemy.Behavior.CHASE, "蛇是追击型")
+	s.enemies.append(e)
+	var before := LevelData.manhattan(e.cell, s.player.cell)
+	var options: Array[Vector2i] = [
+		Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)
+	]
+	var pick := s._closest_to_player(e, options)
+	assert_eq(
+		LevelData.manhattan(e.cell + pick, s.player.cell), before - 1,
+		"追击型一定会挑能缩短距离的方向"
+	)
+
+
+func _test_skittish_enemy_backs_away() -> void:
+	# 猫头鹰（kind 3）被贴脸时会掉头躲开，而不是撞上来送死。
+	var s := _session(OPEN, Vector2i(2, 2))
+	var e := Enemy.new(0, Vector2i(3, 2), 3, 0.1)
+	assert_eq(e.behavior, Enemy.Behavior.SKITTISH, "猫头鹰是怯懦型")
+	s.enemies.append(e)
+	assert_eq(LevelData.manhattan(e.cell, s.player.cell), 1, "开局紧贴玩家")
+	s.tick(0.11)
+	assert_eq(LevelData.manhattan(e.cell, s.player.cell), 2, "被贴脸时反而退开一格")
+	assert_true(s.player.alive, "玩家不会被贴脸的怯懦敌人撞死")
 
 
 func _test_powerup_pickup() -> void:
